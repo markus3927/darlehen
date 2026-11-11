@@ -136,13 +136,13 @@
 
   <div class="fuss">
     <span id="stand"></span>
-    <span><button class="leise klein" id="btn-sichern">Sicherung speichern</button> <button class="leise klein" id="btn-laden">Sicherung laden</button> <button class="leise klein" id="btn-kopieren">Liste kopieren</button><input type="file" id="datei-laden" accept=".json,application/json" hidden></span>
+    <span><button class="leise klein" id="btn-sichern">Sicherung speichern</button> <button class="leise klein" id="btn-laden">Sicherung laden</button> <button class="leise klein" id="btn-kopieren">Liste kopieren</button><input type="file" id="datei-laden" accept=".json,.txt,application/json,text/plain" hidden></span>
   </div>
 </main>
 <footer class="abspann">
   Idee, Konzept &amp; Architektur Markus Rufer<br>
   Technische Umsetzung. Claude by Anthropic<br>
-  Version 1.1
+  Version 1.2
 </footer>
 
 <div class="dialog" id="dlg-einst" hidden>
@@ -284,34 +284,42 @@
     $('btn-sichern').textContent = offen ? 'Sicherung speichern ●' : 'Sicherung speichern';
     $('btn-sichern').title = g ? `Letzte Sicherung: ${new Date(g).toLocaleString('de-CH')}` : 'Noch keine Sicherung';
   }
-  function sicherungsDatei() {
+  function sicherungsDatei(alsText) {
     const json = JSON.stringify({ app: 'darlehen', version: 1, ...d }, null, 1);
     const n = new Date(), tag = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-    const name = `Darlehen_${(d.name || 'Sicherung').replace(/[^\wäöüÄÖÜ-]+/g, '_')}_${tag}.json`;
-    return new File([json], name, { type: 'application/json' });
+    const name = `Darlehen_${(d.name || 'Sicherung').replace(/[^\wäöüÄÖÜ-]+/g, '_')}_${tag}`;
+    // Android-Chrome teilt keine .json-Dateien («Permission denied») → dort als .txt (Inhalt gleich, «Sicherung laden» nimmt beides)
+    return alsText ? new File([json], name + '.txt', { type: 'text/plain' }) : new File([json], name + '.json', { type: 'application/json' });
   }
-  // Ort wählen: PC (Edge/Chrome) mit Speichern-Dialog, der sich den letzten Ordner merkt; Handy über das Teilen-Menü.
+  // Ort wählen: wo der Browser es kann (PC Edge/Chrome, neuere Android-Chrome) Speichern-Dialog mit Ordnerwahl, der sich den Ordner merkt;
+  // sonst Teilen-Menü (iPhone «In Dateien sichern», Android OneDrive/Drive); zuletzt «Downloads».
   const PICKER_ID = 'darlehen-sicherung';
-  const mobil = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  const android = /Android/i.test(navigator.userAgent), mobil = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  const TYPEN = [{ description: 'Darlehen-Sicherung', accept: { 'application/json': ['.json'], 'text/plain': ['.txt'] } }];
+  const herunterladen = (f) => { const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); };
+  const istAbbruch = (e) => e && e.name === 'AbortError';
   $('btn-sichern').onclick = async () => {
-    const f = sicherungsDatei();
-    let wo = '';
+    let wo = '', f = sicherungsDatei(false);
     try {
-      if (window.showSaveFilePicker && !mobil) {
-        const h = await window.showSaveFilePicker({ id: PICKER_ID, startIn: 'documents', suggestedName: f.name,
-          types: [{ description: 'Darlehen-Sicherung', accept: { 'application/json': ['.json'] } }] });
-        const w = await h.createWritable(); await w.write(f); await w.close();
-        wo = `Sicherung «${h.name}» im gewählten Ordner gespeichert.`;
-      } else if (navigator.canShare && navigator.canShare({ files: [f] }) && mobil) {
-        await navigator.share({ files: [f], title: f.name });
-        wo = `Sicherung «${f.name}» erstellt – im Teilen-Menü «In Dateien sichern» bzw. OneDrive/Drive wählen, dann den Ordner.`;
-      } else {
-        const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000);
-        wo = `Sicherung «${f.name}» in «Downloads» gespeichert.`;
+      if (window.showSaveFilePicker) {
+        try {
+          const h = await window.showSaveFilePicker({ id: PICKER_ID, startIn: 'documents', suggestedName: f.name, types: TYPEN });
+          const w = await h.createWritable(); await w.write(f); await w.close();
+          wo = `Sicherung «${h.name}» im gewählten Ordner gespeichert.`;
+        } catch (e) { if (istAbbruch(e)) return; }
       }
+      if (!wo && mobil && navigator.share) {
+        if (android) f = sicherungsDatei(true);
+        try {
+          if (navigator.canShare && !navigator.canShare({ files: [f] })) throw new Error('teilen nicht möglich');
+          await navigator.share({ files: [f], title: f.name });
+          wo = `Sicherung «${f.name}» erstellt – im Teilen-Menü ${android ? 'OneDrive oder Drive' : '«In Dateien sichern»'} wählen, dann den Ordner.`;
+        } catch (e) { if (istAbbruch(e)) return; }
+      }
+      if (!wo) { herunterladen(f); wo = `Sicherung «${f.name}» in «Downloads» gespeichert.`; }
       try { localStorage.setItem(KEY_SICHER, d.geaendert || new Date().toISOString()); } catch (e) {}
       erinnereSicherung(); melde(wo, 'ok');
-    } catch (e) { if (e && e.name !== 'AbortError') melde('Sicherung ging nicht: ' + e.message); }
+    } catch (e) { melde('Sicherung ging nicht: ' + e.message); }
   };
   let ladeDaten = null;
   async function pruefeLadeDatei(f) {
@@ -324,10 +332,9 @@
     } catch (e) { melde('Diese Datei geht nicht: ' + e.message); }
   }
   $('btn-laden').onclick = async () => {
-    if (window.showOpenFilePicker && !mobil) {
+    if (window.showOpenFilePicker) {
       try {
-        const [h] = await window.showOpenFilePicker({ id: PICKER_ID, startIn: 'documents',
-          types: [{ description: 'Darlehen-Sicherung', accept: { 'application/json': ['.json'] } }] });
+        const [h] = await window.showOpenFilePicker({ id: PICKER_ID, startIn: 'documents', types: TYPEN });
         return pruefeLadeDatei(await h.getFile());
       } catch (e) { if (e && e.name === 'AbortError') return; }
     }
