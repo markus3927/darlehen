@@ -142,7 +142,7 @@
 <footer class="abspann">
   Idee, Konzept &amp; Architektur Markus Rufer<br>
   Technische Umsetzung. Claude by Anthropic<br>
-  Version 1.0
+  Version 1.1
 </footer>
 
 <div class="dialog" id="dlg-einst" hidden>
@@ -290,20 +290,31 @@
     const name = `Darlehen_${(d.name || 'Sicherung').replace(/[^\wäöüÄÖÜ-]+/g, '_')}_${tag}.json`;
     return new File([json], name, { type: 'application/json' });
   }
+  // Ort wählen: PC (Edge/Chrome) mit Speichern-Dialog, der sich den letzten Ordner merkt; Handy über das Teilen-Menü.
+  const PICKER_ID = 'darlehen-sicherung';
+  const mobil = /Android|iPhone|iPad/i.test(navigator.userAgent);
   $('btn-sichern').onclick = async () => {
     const f = sicherungsDatei();
+    let wo = '';
     try {
-      if (navigator.canShare && navigator.canShare({ files: [f] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)) await navigator.share({ files: [f], title: f.name });
-      else { const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
+      if (window.showSaveFilePicker && !mobil) {
+        const h = await window.showSaveFilePicker({ id: PICKER_ID, startIn: 'documents', suggestedName: f.name,
+          types: [{ description: 'Darlehen-Sicherung', accept: { 'application/json': ['.json'] } }] });
+        const w = await h.createWritable(); await w.write(f); await w.close();
+        wo = `Sicherung «${h.name}» im gewählten Ordner gespeichert.`;
+      } else if (navigator.canShare && navigator.canShare({ files: [f] }) && mobil) {
+        await navigator.share({ files: [f], title: f.name });
+        wo = `Sicherung «${f.name}» erstellt – im Teilen-Menü «In Dateien sichern» bzw. OneDrive/Drive wählen, dann den Ordner.`;
+      } else {
+        const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000);
+        wo = `Sicherung «${f.name}» in «Downloads» gespeichert.`;
+      }
       try { localStorage.setItem(KEY_SICHER, d.geaendert || new Date().toISOString()); } catch (e) {}
-      erinnereSicherung(); melde(`Sicherung «${f.name}» erstellt – gut aufbewahren (z. B. Mail an dich selbst, Drive, OneDrive).`, 'ok');
+      erinnereSicherung(); melde(wo, 'ok');
     } catch (e) { if (e && e.name !== 'AbortError') melde('Sicherung ging nicht: ' + e.message); }
   };
   let ladeDaten = null;
-  $('btn-laden').onclick = () => $('datei-laden').click();
-  $('datei-laden').onchange = async () => {
-    const f = $('datei-laden').files[0]; $('datei-laden').value = '';
-    if (!f) return;
+  async function pruefeLadeDatei(f) {
     try {
       const g = JSON.parse(await f.text());
       if (!g || g.app !== 'darlehen' || !Array.isArray(g.zahlungen)) throw new Error('keine Darlehen-Sicherung');
@@ -311,6 +322,20 @@
       $('laden-text').textContent = `Sicherung vom ${g.geaendert ? new Date(g.geaendert).toLocaleString('de-CH') : '?'} mit ${g.zahlungen.length} Zahlungen laden? Der jetzige Stand auf diesem Gerät (${d.zahlungen.length} Zahlungen) wird ersetzt.`;
       $('dlg-laden').hidden = false;
     } catch (e) { melde('Diese Datei geht nicht: ' + e.message); }
+  }
+  $('btn-laden').onclick = async () => {
+    if (window.showOpenFilePicker && !mobil) {
+      try {
+        const [h] = await window.showOpenFilePicker({ id: PICKER_ID, startIn: 'documents',
+          types: [{ description: 'Darlehen-Sicherung', accept: { 'application/json': ['.json'] } }] });
+        return pruefeLadeDatei(await h.getFile());
+      } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    $('datei-laden').click();
+  };
+  $('datei-laden').onchange = async () => {
+    const f = $('datei-laden').files[0]; $('datei-laden').value = '';
+    if (f) pruefeLadeDatei(f);
   };
 
   // ---------- Viele Zahlungen auf einmal (Nachtragen)
