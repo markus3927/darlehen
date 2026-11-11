@@ -63,6 +63,12 @@
   .dialog{position:fixed;inset:0;background:rgba(15,25,40,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
   .dialog[hidden]{display:none}
   [hidden]{display:none !important}
+  details#import{margin-top:14px;border-top:1px solid var(--linie);padding-top:12px}
+  details#import summary{cursor:pointer;color:var(--blau);font-weight:600;font-size:15px;padding:6px 0}
+  textarea{font:16px/1.5 ui-monospace,Consolas,monospace;width:100%;padding:10px;border:1px solid var(--linie);border-radius:10px;background:#fff;color:var(--text);resize:vertical}
+  .i-zus{font-size:14px;margin:10px 0 6px}
+  #i-vorschau table{font-size:13.5px}
+  #i-vorschau tr.fehler td{color:var(--rot)} #i-vorschau tr.doppelt td{color:var(--grau);text-decoration:line-through}
   .dialog .karte{max-width:420px;width:100%;margin:0}
   .fuss{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px;color:var(--grau)}
   @media (max-width:520px){
@@ -111,6 +117,14 @@
       <div><label for="f-notiz">Notiz (freiwillig)</label><input id="f-notiz" type="text" maxlength="120" placeholder="z. B. Teilzahlung November"></div>
       <div class="voll knopfreihe"><span id="f-status" class="unter"></span><button type="submit" id="f-knopf">Zahlung speichern</button></div>
     </form>
+    <details id="import">
+      <summary>Viele alte Zahlungen auf einmal nachtragen</summary>
+      <div class="unter" style="margin:8px 0">Eine Zahlung pro Zeile: Datum und Betrag, danach freiwillig Bank/TWINT/Bar und eine Notiz.
+        Einfügen aus Notizen, Excel, WhatsApp oder Bankauszug geht auch.</div>
+      <textarea id="i-text" rows="7" spellcheck="false" placeholder="03.10.22 500&#10;15.11.22 300 Bar&#10;2.1.2023  1'200.00  Bank  Weihnachtsgeld&#10;20.02.23 Fr. 250.–"></textarea>
+      <div class="knopfreihe" style="margin-top:8px"><button type="button" class="leise" id="i-pruefen">Prüfen</button><button type="button" id="i-speichern" disabled>Alle speichern</button></div>
+      <div id="i-vorschau"></div>
+    </details>
   </section>
 
   <section class="karte" id="verlauf-karte">
@@ -287,6 +301,64 @@
     melde(text || '');
     setTimeout(() => $('c-code').focus(), 50);
   }
+
+  // ---------- Viele Zahlungen auf einmal (Nachtragen)
+  /** Eine Zeile lesen: Datum (11.11.26 / 11.11.2026 / 2026-11-11), Betrag (500 / 1'500.00 / 1500,50 / Fr. 250.–), Rest = Art/Notiz. */
+  function leseImportZeile(roh) {
+    let z = String(roh).replace(/\u00a0/g, ' ').trim();
+    if (!z) return null;
+    let iso = null;
+    let m = z.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) { iso = leseDatum(`${m[3]}.${m[2]}.${m[1]}`); z = z.replace(m[0], ' '); }
+    else { m = z.match(/(^|[^\d])(\d{1,2})[.\/](\d{1,2})[.\/](\d{4}|\d{2})(?![\d])/); if (m) { iso = leseDatum(`${m[2]}.${m[3]}.${m[4]}`); z = z.replace(m[0], m[1] + ' '); } }
+    if (!iso) return { roh, fehler: 'Datum fehlt oder ungültig' };
+    z = z.replace(/\b(CHF|SFr\.?|Fr\.)\s*/gi, ' ');
+    const b = z.match(/-?\d{1,3}(?:['’]\d{3})+(?:[.,]\d{1,2})?|-?\d+(?:[.,]\d{1,2})?/);
+    if (!b) return { roh, fehler: 'Betrag fehlt' };
+    const betrag = leseBetrag(b[0]);
+    if (!(betrag > 0)) return { roh, fehler: 'Betrag fehlt' };
+    z = (z.slice(0, b.index) + ' ' + z.slice(b.index + b[0].length)).replace(/^[\s.–-]+|[\s]+$/g, '').replace(/^[.–-]+\s*/, '').replace(/\t+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    let art = 'Bank';
+    const a = z.match(/\b(Bank|TWINT|Twint|twint|Bar|bar|bank)\b/);
+    if (a) { art = /twint/i.test(a[1]) ? 'TWINT' : /bar/i.test(a[1]) ? 'Bar' : 'Bank'; z = z.replace(a[0], '').replace(/\s{2,}/g, ' ').replace(/^[\s,;:–-]+|[\s,;:–-]+$/g, ''); }
+    return { roh, datum: iso, betrag, art, notiz: z.slice(0, 120) };
+  }
+  let importListe = [];
+  function pruefeImport() {
+    const zeilen = $('i-text').value.split(/\r?\n/);
+    const schon = new Set(d.zahlungen.map((x) => `${x.datum}|${x.betrag}`));
+    const gesehen = new Set();
+    importListe = zeilen.map(leseImportZeile).filter(Boolean).map((x) => {
+      if (x.fehler) return x;
+      const k = `${x.datum}|${x.betrag}`;
+      const doppelt = schon.has(k) ? 'schon erfasst' : gesehen.has(k) ? 'doppelt in der Liste' : '';
+      gesehen.add(k);
+      return { ...x, doppelt };
+    });
+    const neu = importListe.filter((x) => !x.fehler && !x.doppelt), fehler = importListe.filter((x) => x.fehler).length, dop = importListe.filter((x) => x.doppelt).length;
+    const summe = neu.reduce((s2, x) => s2 + x.betrag, 0);
+    $('i-vorschau').innerHTML = importListe.length ? `<div class="i-zus"><b>${neu.length} Zahlung${neu.length === 1 ? '' : 'en'}</b> · zusammen <b>${chf(summe)}</b>` +
+      `${fehler ? ` · <span style="color:var(--rot)">${fehler} Zeile${fehler === 1 ? '' : 'n'} nicht lesbar</span>` : ''}${dop ? ` · ${dop} doppelt (werden weggelassen)` : ''}</div>` +
+      `<table><thead><tr><th>Datum</th><th>Wie / Notiz</th><th class="b">Betrag</th></tr></thead><tbody>${importListe.map((x) => x.fehler
+        ? `<tr class="fehler"><td colspan="2">${esc(x.roh)}</td><td class="b">${esc(x.fehler)}</td></tr>`
+        : `<tr class="${x.doppelt ? 'doppelt' : ''}" title="${esc(x.doppelt)}"><td>${datumKurz(x.datum)}</td><td>${esc(x.art)}${x.notiz ? `<div class="notiz">${esc(x.notiz)}</div>` : ''}${x.doppelt ? `<div class="notiz">${esc(x.doppelt)}</div>` : ''}</td><td class="b betrag">${chf(x.betrag)}</td></tr>`).join('')}</tbody></table>` : '';
+    $('i-speichern').disabled = !neu.length || !schreibbar;
+    $('i-speichern').textContent = neu.length ? `${neu.length} speichern` : 'Alle speichern';
+  }
+  $('i-pruefen').onclick = pruefeImport;
+  $('i-text').addEventListener('input', () => { $('i-speichern').disabled = true; });
+  $('i-speichern').onclick = async () => {
+    pruefeImport();
+    const neu = importListe.filter((x) => !x.fehler && !x.doppelt);
+    if (!neu.length) return;
+    const basis = Date.now();
+    const vorher = d.zahlungen;
+    d.zahlungen = [...d.zahlungen, ...neu.map((x, i) => ({ id: (basis + i).toString(36), datum: x.datum, betrag: x.betrag, art: x.art, notiz: x.notiz }))];
+    zeige();
+    const ok = await speichere(`${neu.length} Zahlungen nachgetragen (zusammen ${chf(neu.reduce((s2, x) => s2 + x.betrag, 0))}).`);
+    if (ok === true) { $('i-text').value = ''; $('i-vorschau').innerHTML = ''; $('i-speichern').disabled = true; $('import').open = false; window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    else if (!ok) { d.zahlungen = vorher; zeige(); }
+  };
 
   // ---------- Bedienung
   const heuteKurz = () => datumKurz(heute());
