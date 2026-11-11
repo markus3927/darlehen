@@ -142,7 +142,7 @@
 <footer class="abspann">
   Idee, Konzept &amp; Architektur Markus Rufer<br>
   Technische Umsetzung. Claude by Anthropic<br>
-  Version 1.2
+  Version 1.3
 </footer>
 
 <div class="dialog" id="dlg-einst" hidden>
@@ -291,8 +291,8 @@
     // Android-Chrome teilt keine .json-Dateien («Permission denied») → dort als .txt (Inhalt gleich, «Sicherung laden» nimmt beides)
     return alsText ? new File([json], name + '.txt', { type: 'text/plain' }) : new File([json], name + '.json', { type: 'application/json' });
   }
-  // Ort wählen: wo der Browser es kann (PC Edge/Chrome, neuere Android-Chrome) Speichern-Dialog mit Ordnerwahl, der sich den Ordner merkt;
-  // sonst Teilen-Menü (iPhone «In Dateien sichern», Android OneDrive/Drive); zuletzt «Downloads».
+  // Ort wählen: PC (Edge/Chrome) Speichern-Dialog mit Ordnerwahl, der sich den Ordner merkt;
+  // Handy immer Teilen-Menü (dort sind OneDrive/Drive dabei – im Android-Speichern-Dialog fehlt OneDrive); zuletzt «Downloads».
   const PICKER_ID = 'darlehen-sicherung';
   const android = /Android/i.test(navigator.userAgent), mobil = /Android|iPhone|iPad/i.test(navigator.userAgent);
   const TYPEN = [{ description: 'Darlehen-Sicherung', accept: { 'application/json': ['.json'], 'text/plain': ['.txt'] } }];
@@ -301,7 +301,7 @@
   $('btn-sichern').onclick = async () => {
     let wo = '', f = sicherungsDatei(false);
     try {
-      if (window.showSaveFilePicker) {
+      if (window.showSaveFilePicker && !mobil) {
         try {
           const h = await window.showSaveFilePicker({ id: PICKER_ID, startIn: 'documents', suggestedName: f.name, types: TYPEN });
           const w = await h.createWritable(); await w.write(f); await w.close();
@@ -332,7 +332,7 @@
     } catch (e) { melde('Diese Datei geht nicht: ' + e.message); }
   }
   $('btn-laden').onclick = async () => {
-    if (window.showOpenFilePicker) {
+    if (window.showOpenFilePicker && !mobil) {
       try {
         const [h] = await window.showOpenFilePicker({ id: PICKER_ID, startIn: 'documents', types: TYPEN });
         return pruefeLadeDatei(await h.getFile());
