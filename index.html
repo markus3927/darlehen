@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Darlehen">
 <meta name="theme-color" content="#182f83">
 <title>Darlehen – Rückzahlungen</title>
 <link rel="icon" id="fav" href="data:image/svg+xml,%3Csvg viewBox=%220 0 64 64%22 xmlns=%22http://www.w3.org/2000/svg%22 aria-hidden=%22true%22%3E%3Cdefs%3E%3ClinearGradient id=%22ig%22 x1=%220%22 y1=%220%22 x2=%220%22 y2=%221%22%3E%3Cstop offset=%220%22 stop-color=%22#3f63dd%22/%3E%3Cstop offset=%221%22 stop-color=%22#182f83%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x=%222%22 y=%222%22 width=%2260%22 height=%2260%22 rx=%2214%22 fill=%22url%28#ig%29%22 stroke=%22#42A5F5%22 stroke-width=%222.5%22/%3E%3Ccircle cx=%2232%22 cy=%2232%22 r=%2219%22 fill=%22none%22 stroke=%22#ffffff%22 stroke-opacity=%22.25%22 stroke-width=%226%22/%3E%3Cpath d=%22M32 13 A19 19 0 1 1 13.9 37.9%22 fill=%22none%22 stroke=%22#7CD992%22 stroke-width=%226%22 stroke-linecap=%22round%22/%3E%3Ctext x=%2232%22 y=%2237%22 text-anchor=%22middle%22 font-family=%22Segoe UI,Arial,sans-serif%22 font-weight=%22800%22 font-size=%2214%22 fill=%22#fff%22%3ECHF%3C/text%3E%3C/svg%3E">
@@ -89,13 +91,6 @@
 </div></header>
 <main>
   <div id="meldung"></div>
-  <section class="karte" id="anmelden" hidden>
-    <h2>Code eingeben</h2>
-    <form id="form-code" style="grid-template-columns:1fr">
-      <div class="feld-mit"><input id="c-code" type="password" autocomplete="current-password" placeholder="Code"><button type="submit">Öffnen</button></div>
-      <div class="unter">Der Code wird auf diesem Gerät gemerkt.</div>
-    </form>
-  </section>
 
   <section class="karte">
     <div class="zahlen">
@@ -139,7 +134,7 @@
 
   <div class="fuss">
     <span id="stand"></span>
-    <span><button class="leise klein" id="btn-abmelden">Abmelden</button> <button class="leise klein" id="btn-kopieren">Liste kopieren (für Excel)</button></span>
+    <span><button class="leise klein" id="btn-sichern">Sicherung speichern</button> <button class="leise klein" id="btn-laden">Sicherung laden</button> <button class="leise klein" id="btn-kopieren">Liste kopieren</button><input type="file" id="datei-laden" accept=".json,application/json" hidden></span>
   </div>
 </main>
 
@@ -147,12 +142,20 @@
   <div class="karte">
     <h2>Einstellungen</h2>
     <form id="form-einst">
-      <div class="voll"><label for="e-name">Name der Schuldnerin</label><input id="e-name" type="text" maxlength="60"></div>
+      <div class="voll"><label for="e-name">Name (steht im Titel, z. B. wer das Geld bekommen hat)</label><input id="e-name" type="text" maxlength="60"></div>
       <div><label for="e-total">Darlehen CHF</label><input id="e-total" type="text" inputmode="decimal" autocomplete="off" required></div>
       <div><label for="e-seit">Ausbezahlt am (freiwillig)</label><div class="feld-mit"><input id="e-seit" type="text" inputmode="decimal" placeholder="TT.MM.JJ" autocomplete="off"><button type="button" class="leise" id="e-heute">Heute</button></div></div>
       <div class="voll unter">Datum, an dem sie das Geld bekommen hat. Steht oben unter dem Namen, und die Grafik «Verlauf» beginnt dort. Leer lassen geht auch.</div>
       <div class="voll knopfreihe"><button type="button" class="leise" id="e-abbruch">Abbrechen</button><button type="submit">Speichern</button></div>
     </form>
+  </div>
+</div>
+
+<div class="dialog" id="dlg-laden" hidden>
+  <div class="karte">
+    <h2>Sicherung laden?</h2>
+    <p id="laden-text" style="margin:0 0 14px"></p>
+    <div class="knopfreihe"><button class="leise" id="ld-abbruch">Abbrechen</button><button id="ld-ok">Laden</button></div>
   </div>
 </div>
 
@@ -165,7 +168,7 @@
 </div>
 </template>
 
-<script type="application/json" id="daten">{"name":"Kollegin","total":20000,"seit":"","zahlungen":[],"geaendert":""}</script>
+<script type="application/json" id="daten">{"name":"","total":20000,"seit":"","zahlungen":[],"geaendert":""}</script>
 
 <script id="app-code">
 (() => {
@@ -176,7 +179,7 @@
   d.zahlungen = Array.isArray(d.zahlungen) ? d.zahlungen : [];
   document.body.appendChild(geruest.content.cloneNode(true));
 
-  let schreibbar = false;
+  let schreibbar = true;
 
   // ---------- Format
   const chf = (x) => { const n = Math.round(x * 100) / 100, s = n.toFixed(2).split('.'); return s[0].replace(/\B(?=(\d{3})+(?!\d))/g, '’') + '.' + s[1]; };
@@ -203,8 +206,8 @@
   function zeige() {
     const z = sortiert(), bezahlt = z.reduce((s, x) => s + x.betrag, 0), rest = Math.max(0, d.total - bezahlt);
     const pz = d.total > 0 ? Math.min(100, bezahlt / d.total * 100) : 0;
-    document.title = `Darlehen ${d.name} – Rückzahlungen`;
-    $('titel').textContent = `Darlehen ${d.name}`;
+    document.title = d.name ? `Darlehen ${d.name}` : 'Darlehen – Rückzahlungen';
+    $('titel').textContent = d.name ? `Darlehen ${d.name}` : 'Darlehen';
     $('untertitel').textContent = d.seit ? `Ausbezahlt am ${datumKurz(d.seit)}` : 'Rückzahlungen';
     $('z-total').textContent = chfKurz(d.total);
     $('z-bezahlt').textContent = chfKurz(bezahlt);
@@ -255,52 +258,53 @@
 
   function melde(text, artMeldung = 'warn') { $('meldung').innerHTML = text ? `<div class="hinweis ${artMeldung}">${esc(text)}</div>` : ''; }
 
-  // ---------- Speichern über /api/daten (Vercel)
-  const CODE_KEY = 'darlehen-code';
-  let code = '', rolle = null;
-  const merke = (c) => { try { if (c) localStorage.setItem(CODE_KEY, c); else localStorage.removeItem(CODE_KEY); } catch (e) {} };
-  const gemerkt = () => { try { return localStorage.getItem(CODE_KEY) || ''; } catch (e) { return ''; } };
-  async function api(methode, body) {
-    const r = await fetch('/api/daten', { method: methode, headers: { 'x-code': code, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
-    let j = {}; try { j = await r.json(); } catch (e) {}
-    return { status: r.status, ...j };
-  }
+  // ---------- Speichern auf diesem Gerät (Browser-Speicher) + Sicherung als Datei
+  const KEY = 'darlehen-daten-v1', KEY_SICHER = 'darlehen-gesichert';
+  let speicherOk = true;
+  try { localStorage.setItem('darlehen-test', '1'); localStorage.removeItem('darlehen-test'); } catch (e) { speicherOk = false; }
+  try { const roh = localStorage.getItem(KEY); if (roh) { const g = JSON.parse(roh); if (g && Array.isArray(g.zahlungen)) d = g; } } catch (e) {}
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}   // Browser bitten, nichts zu löschen
+  const gesichert = () => { try { return localStorage.getItem(KEY_SICHER) || ''; } catch (e) { return ''; } };
   async function speichere(text) {
-    if (rolle !== 'schreiben') { melde('Nur anschauen erlaubt.'); return false; }
-    $('f-status').textContent = 'Speichert …';
+    d.geaendert = new Date().toISOString();
+    try { localStorage.setItem(KEY, JSON.stringify(d)); }
+    catch (e) { melde('Speichern ging nicht – dieser Browser erlaubt keinen Speicher (privates Fenster?).'); return false; }
+    zeige(); melde(text, 'ok'); erinnereSicherung(); return true;
+  }
+  function erinnereSicherung() {
+    const g = gesichert();
+    const offen = d.zahlungen.length && (!g || g < d.geaendert);
+    $('btn-sichern').textContent = offen ? 'Sicherung speichern ●' : 'Sicherung speichern';
+    $('btn-sichern').title = g ? `Letzte Sicherung: ${new Date(g).toLocaleString('de-CH')}` : 'Noch keine Sicherung';
+  }
+  function sicherungsDatei() {
+    const json = JSON.stringify({ app: 'darlehen', version: 1, ...d }, null, 1);
+    const n = new Date(), tag = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+    const name = `Darlehen_${(d.name || 'Sicherung').replace(/[^\wäöüÄÖÜ-]+/g, '_')}_${tag}.json`;
+    return new File([json], name, { type: 'application/json' });
+  }
+  $('btn-sichern').onclick = async () => {
+    const f = sicherungsDatei();
     try {
-      const a = await api('PUT', { daten: d, basis: d.geaendert || '' });
-      $('f-status').textContent = '';
-      if (a.status === 200) { d = a.daten; zeige(); melde(text, 'ok'); return true; }
-      if (a.status === 409) { d = a.daten; zeige(); melde('Inzwischen auf einem anderen Gerät geändert – neuer Stand geladen, bitte nochmals eintragen.'); return 'neu'; }
-      if (a.status === 401) { abmelden('Code nicht mehr gültig.'); return false; }
-      melde('Speichern ging nicht: ' + (a.fehler || a.status)); return false;
-    } catch (e) { $('f-status').textContent = ''; melde('Keine Verbindung – nicht gespeichert.'); return false; }
-  }
-  async function ladeDaten() {
-    let a;
-    try { a = await api('GET'); } catch (e) { melde('Keine Verbindung.'); return; }
-    if (a.status === 401) return abmelden(code ? 'Code falsch.' : '');
-    if (a.status !== 200) { melde('Laden ging nicht: ' + (a.fehler || a.status)); return; }
-    rolle = a.rolle; merke(code);
-    if (a.daten) d = a.daten;
-    schreibbar = rolle === 'schreiben';
-    $('anmelden').hidden = true;
-    for (const el of document.querySelectorAll('.nach-anmelden')) el.hidden = false;
-    for (const id of ['erfassen', 'btn-einst']) $(id).hidden = !schreibbar;
-    if (!schreibbar) melde('Nur Ansicht – hier siehst du alle Rückzahlungen.', 'ok');
-    else if (!a.daten) melde('Noch nichts gespeichert – die nächste Zahlung speichert alles.', 'warn');
-    else melde('');
-    zeige();
-  }
-  function abmelden(text) {
-    code = ''; rolle = null; schreibbar = false; merke('');
-    $('anmelden').hidden = false;
-    for (const id of ['erfassen', 'btn-einst']) $(id).hidden = true;
-    for (const el of document.querySelectorAll('.nach-anmelden')) el.hidden = true;
-    melde(text || '');
-    setTimeout(() => $('c-code').focus(), 50);
-  }
+      if (navigator.canShare && navigator.canShare({ files: [f] }) && /Android|iPhone|iPad/i.test(navigator.userAgent)) await navigator.share({ files: [f], title: f.name });
+      else { const u = URL.createObjectURL(f), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
+      try { localStorage.setItem(KEY_SICHER, d.geaendert || new Date().toISOString()); } catch (e) {}
+      erinnereSicherung(); melde(`Sicherung «${f.name}» erstellt – gut aufbewahren (z. B. Mail an dich selbst, Drive, OneDrive).`, 'ok');
+    } catch (e) { if (e && e.name !== 'AbortError') melde('Sicherung ging nicht: ' + e.message); }
+  };
+  let ladeDaten = null;
+  $('btn-laden').onclick = () => $('datei-laden').click();
+  $('datei-laden').onchange = async () => {
+    const f = $('datei-laden').files[0]; $('datei-laden').value = '';
+    if (!f) return;
+    try {
+      const g = JSON.parse(await f.text());
+      if (!g || g.app !== 'darlehen' || !Array.isArray(g.zahlungen)) throw new Error('keine Darlehen-Sicherung');
+      ladeDaten = g;
+      $('laden-text').textContent = `Sicherung vom ${g.geaendert ? new Date(g.geaendert).toLocaleString('de-CH') : '?'} mit ${g.zahlungen.length} Zahlungen laden? Der jetzige Stand auf diesem Gerät (${d.zahlungen.length} Zahlungen) wird ersetzt.`;
+      $('dlg-laden').hidden = false;
+    } catch (e) { melde('Diese Datei geht nicht: ' + e.message); }
+  };
 
   // ---------- Viele Zahlungen auf einmal (Nachtragen)
   /** Eine Zeile lesen: Datum (11.11.26 / 11.11.2026 / 2026-11-11), Betrag (500 / 1'500.00 / 1500,50 / Fr. 250.–), Rest = Art/Notiz. */
@@ -399,7 +403,7 @@
     const vorher = { ...d };
     const seitTxt = $('e-seit').value.trim(), seit = seitTxt ? leseDatum(seitTxt) : '';
     if (seit === null) { melde('Datum bitte so: 11.11.26'); return; }
-    d.name = $('e-name').value.trim() || 'Kollegin'; d.total = total; d.seit = seit;
+    d.name = $('e-name').value.trim(); d.total = total; d.seit = seit;
     $('dlg-einst').hidden = true; zeige();
     const ok = await speichere('Einstellungen gespeichert.'); if (!ok) { Object.assign(d, vorher); zeige(); }
   });
@@ -410,18 +414,17 @@
     catch (e) { melde('Kopieren wurde vom Browser abgelehnt.'); }
   };
 
-  $('form-code').addEventListener('submit', (ev) => { ev.preventDefault(); code = $('c-code').value.trim(); if (code) ladeDaten(); });
-  $('btn-abmelden').onclick = () => abmelden('Abgemeldet.');
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && rolle) ladeDaten(); });   // wieder geöffnet: neuster Stand
+  $('ld-abbruch').onclick = () => { $('dlg-laden').hidden = true; ladeDaten = null; };
+  $('ld-ok').onclick = async () => {
+    $('dlg-laden').hidden = true; if (!ladeDaten) return;
+    const { app, version, ...rest } = ladeDaten; d = { name: 'Darlehen', total: 20000, seit: '', zahlungen: [], ...rest }; ladeDaten = null;
+    await speichere(`Sicherung geladen: ${d.zahlungen.length} Zahlungen.`);
+  };
 
-  // ---------- Start: Code aus dem Link (…/#code) oder auf diesem Gerät gemerkt
-  for (const el of document.querySelectorAll('main > section.karte:not(#anmelden), main > .fuss')) el.classList.add('nach-anmelden');
-  const ausLink = decodeURIComponent((location.hash || '').slice(1));
-  if (ausLink) { code = ausLink; history.replaceState(null, '', location.pathname); } else code = gemerkt();
-  for (const el of document.querySelectorAll('.nach-anmelden')) el.hidden = true;
-  $('btn-einst').hidden = true;
-  zeige();
-  if (code) ladeDaten(); else abmelden('');
+  // ---------- Start
+  schreibbar = speicherOk;
+  if (!speicherOk) melde('Dieser Browser speichert nichts (privates Fenster?). Bitte normal öffnen.');
+  zeige(); erinnereSicherung();
 })();
 </script>
 </body>
