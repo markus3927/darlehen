@@ -138,11 +138,15 @@
     <span id="stand"></span>
     <span><button class="leise klein" id="btn-sichern">Sicherung speichern</button> <button class="leise klein" id="btn-laden">Sicherung laden</button> <button class="leise klein" id="btn-kopieren">Liste kopieren</button><input type="file" id="datei-laden" accept=".json,.txt,application/json,text/plain" hidden></span>
   </div>
+  <div class="fuss" id="auto-zeile" hidden style="margin-top:6px">
+    <span id="auto-text"></span>
+    <button class="leise klein" id="btn-ordner">Ordner verbinden</button>
+  </div>
 </main>
 <footer class="abspann">
   Idee, Konzept &amp; Architektur Markus Rufer<br>
   Technische Umsetzung. Claude by Anthropic<br>
-  Version 1.3
+  Version 1.4
 </footer>
 
 <div class="dialog" id="dlg-einst" hidden>
@@ -276,7 +280,7 @@
     d.geaendert = new Date().toISOString();
     try { localStorage.setItem(KEY, JSON.stringify(d)); }
     catch (e) { melde('Speichern ging nicht – dieser Browser erlaubt keinen Speicher (privates Fenster?).'); return false; }
-    zeige(); melde(text, 'ok'); erinnereSicherung(); return true;
+    zeige(); melde(text, 'ok'); erinnereSicherung(); await autoSichern(false); return true;
   }
   function erinnereSicherung() {
     const g = gesichert();
@@ -321,6 +325,54 @@
       erinnereSicherung(); melde(wo, 'ok');
     } catch (e) { melde('Sicherung ging nicht: ' + e.message); }
   };
+  // ---------- Automatisch sichern in einen Ordner (wie Kassabuch) – nur PC mit Edge/Chrome.
+  // Einmal «Ordner verbinden», danach schreibt jede Änderung «Darlehen_<Name>.json» dort hinein (Ordner wird im Browser gemerkt).
+  const autoMoeglich = 'showDirectoryPicker' in window && !mobil;
+  let ordner = null, ordnerOk = false;
+  const idb = (modus, fn) => new Promise((res, rej) => {
+    const r = indexedDB.open('darlehen-ordner', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('h');
+    r.onerror = () => rej(r.error);
+    r.onsuccess = () => { const tx = r.result.transaction('h', modus), q = fn(tx.objectStore('h')); tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error); };
+  });
+  const autoName = () => `Darlehen_${(d.name || 'Sicherung').replace(/[^\wäöüÄÖÜ-]+/g, '_')}.json`;
+  const uhr = () => new Date().toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
+  function zeigeAuto(text) {
+    if (!autoMoeglich) return;
+    $('auto-zeile').hidden = false;
+    $('auto-text').textContent = text || (!ordner ? 'Automatische Sicherung: noch kein Ordner verbunden'
+      : ordnerOk ? `Automatische Sicherung in «${ordner.name}»` : `Automatische Sicherung in «${ordner.name}» – bitte «Freigeben» tippen`);
+    $('btn-ordner').textContent = !ordner ? 'Ordner verbinden' : ordnerOk ? 'Ordner ändern' : 'Freigeben';
+  }
+  async function autoSichern(ausKlick) {
+    if (!autoMoeglich || !ordner) return false;
+    try {
+      const opts = { mode: 'readwrite' };
+      let p = await ordner.queryPermission(opts);
+      if (p !== 'granted' && ausKlick) p = await ordner.requestPermission(opts);
+      ordnerOk = p === 'granted';
+      if (!ordnerOk) { zeigeAuto(); return false; }
+      const fh = await ordner.getFileHandle(autoName(), { create: true }), w = await fh.createWritable();
+      await w.write(JSON.stringify({ app: 'darlehen', version: 1, ...d }, null, 1)); await w.close();
+      try { localStorage.setItem(KEY_SICHER, d.geaendert || new Date().toISOString()); } catch (e) {}
+      erinnereSicherung(); zeigeAuto(`Automatisch gesichert ${uhr()} → «${ordner.name}» / ${autoName()}`);
+      return true;
+    } catch (e) { zeigeAuto(`Automatische Sicherung ging nicht: ${e.message}`); return false; }
+  }
+  if (autoMoeglich) {
+    $('btn-ordner').onclick = async () => {
+      if (ordner && !ordnerOk) { if (await autoSichern(true)) melde(`Ordner «${ordner.name}» freigegeben – Sicherung läuft wieder automatisch.`, 'ok'); return; }
+      try {
+        const h = await window.showDirectoryPicker({ id: PICKER_ID, mode: 'readwrite', startIn: ordner || 'documents' });
+        ordner = h; try { await idb('readwrite', (s) => s.put(h, 'ordner')); } catch (e) {}
+        if (await autoSichern(true)) melde(`Ordner «${h.name}» verbunden – ab jetzt wird jede Änderung automatisch dort gesichert.`, 'ok');
+      } catch (e) { if (!istAbbruch(e)) melde('Ordner ging nicht: ' + e.message); }
+    };
+    idb('readonly', (s) => s.get('ordner')).then(async (h) => {
+      if (h) { ordner = h; try { ordnerOk = (await h.queryPermission({ mode: 'readwrite' })) === 'granted'; } catch (e) {} }
+      zeigeAuto();
+    }).catch(() => zeigeAuto());
+  }
   let ladeDaten = null;
   async function pruefeLadeDatei(f) {
     try {
@@ -334,7 +386,7 @@
   $('btn-laden').onclick = async () => {
     if (window.showOpenFilePicker && !mobil) {
       try {
-        const [h] = await window.showOpenFilePicker({ id: PICKER_ID, startIn: 'documents', types: TYPEN });
+        const [h] = await window.showOpenFilePicker({ id: PICKER_ID, startIn: ordner || 'documents', types: TYPEN });
         return pruefeLadeDatei(await h.getFile());
       } catch (e) { if (e && e.name === 'AbortError') return; }
     }
