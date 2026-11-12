@@ -146,7 +146,7 @@
 <footer class="abspann">
   Idee, Konzept &amp; Architektur Markus Rufer<br>
   Technische Umsetzung. Claude by Anthropic<br>
-  Version 1.4
+  Version 1.5
 </footer>
 
 <div class="dialog" id="dlg-einst" hidden>
@@ -330,10 +330,10 @@
   const autoMoeglich = 'showDirectoryPicker' in window && !mobil;
   let ordner = null, ordnerOk = false;
   const idb = (modus, fn) => new Promise((res, rej) => {
-    const r = indexedDB.open('darlehen-ordner', 1);
+    let r; try { r = indexedDB.open('darlehen-ordner', 1); } catch (e) { rej(e); return; }
     r.onupgradeneeded = () => r.result.createObjectStore('h');
     r.onerror = () => rej(r.error);
-    r.onsuccess = () => { const tx = r.result.transaction('h', modus), q = fn(tx.objectStore('h')); tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error); };
+    r.onsuccess = () => { try { const tx = r.result.transaction('h', modus), q = fn(tx.objectStore('h')); tx.oncomplete = () => res(q && q.result); tx.onerror = () => rej(tx.error); } catch (e) { rej(e); } };
   });
   const autoName = () => `Darlehen_${(d.name || 'Sicherung').replace(/[^\wäöüÄÖÜ-]+/g, '_')}.json`;
   const uhr = () => new Date().toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
@@ -360,13 +360,25 @@
     } catch (e) { zeigeAuto(`Automatische Sicherung ging nicht: ${e.message}`); return false; }
   }
   if (autoMoeglich) {
+    const NICHT_ERLAUBT = 'Nicht verbunden: Der Browser hat das Schreiben nicht erlaubt. Nochmals klicken und bei der Frage «Dateien bearbeiten» / «Änderungen speichern» auf Zulassen klicken.';
     $('btn-ordner').onclick = async () => {
-      if (ordner && !ordnerOk) { if (await autoSichern(true)) melde(`Ordner «${ordner.name}» freigegeben – Sicherung läuft wieder automatisch.`, 'ok'); return; }
-      try {
-        const h = await window.showDirectoryPicker({ id: PICKER_ID, mode: 'readwrite', startIn: ordner || 'documents' });
-        ordner = h; try { await idb('readwrite', (s) => s.put(h, 'ordner')); } catch (e) {}
-        if (await autoSichern(true)) melde(`Ordner «${h.name}» verbunden – ab jetzt wird jede Änderung automatisch dort gesichert.`, 'ok');
-      } catch (e) { if (!istAbbruch(e)) melde('Ordner ging nicht: ' + e.message); }
+      if (ordner && !ordnerOk) {
+        if (await autoSichern(true)) melde(`Ordner «${ordner.name}» freigegeben – Sicherung läuft wieder automatisch.`, 'ok');
+        else if (!ordnerOk) zeigeAuto(NICHT_ERLAUBT);
+        return;
+      }
+      zeigeAuto('Fenster offen: OneDrive → SPOOKY → Dominique Weidmann öffnen, dann «Ordner auswählen» und danach «Dateien bearbeiten» zulassen.');
+      let h;
+      try { h = await window.showDirectoryPicker({ id: PICKER_ID, mode: 'readwrite', startIn: ordner || 'documents' }); }
+      catch (e) {
+        if (istAbbruch(e)) zeigeAuto(ordner ? `Abgebrochen – bleibt bei «${ordner.name}».`
+          : 'Nicht verbunden: Fenster abgebrochen oder «Dateien bearbeiten» nicht zugelassen. Nochmals «Ordner verbinden» klicken.');
+        else { zeigeAuto('Ordner ging nicht: ' + e.message); melde('Ordner ging nicht: ' + e.message); }
+        return;
+      }
+      ordner = h; try { await idb('readwrite', (s) => s.put(h, 'ordner')); } catch (e) {}
+      if (await autoSichern(true)) melde(`Ordner «${h.name}» verbunden – ab jetzt wird jede Änderung automatisch dort gesichert.`, 'ok');
+      else if (!ordnerOk) zeigeAuto(NICHT_ERLAUBT);
     };
     idb('readonly', (s) => s.get('ordner')).then(async (h) => {
       if (h) { ordner = h; try { ordnerOk = (await h.queryPermission({ mode: 'readwrite' })) === 'granted'; } catch (e) {} }
